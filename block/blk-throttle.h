@@ -90,6 +90,8 @@ struct throtl_grp {
 
 	/* List of tgs waiting for per cpu stats memory to be allocated */
 	struct list_head stats_alloc_node;
+
+	struct fake_device  *fake_d;  
 };
 
 
@@ -101,3 +103,4 @@ extern void throtl_update_dispatch_stats(struct blkcg_gq *blkg, u64 bytes,int rw
 extern struct throtl_grp *throtl_lookup_create_tg(struct throtl_data *td,struct blkcg *blkcg);
 extern struct throtl_grp *throtl_lookup_tg(struct throtl_data *td,struct blkcg *blkcg);
 extern struct blkcg_gq *tg_to_blkg(struct throtl_grp *tg);
+

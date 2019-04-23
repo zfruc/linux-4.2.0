@@ -91,6 +91,11 @@ static DECLARE_DELAYED_WORK(tg_stats_alloc_work, tg_stats_alloc_fn);
 
 static void throtl_pending_timer_fn(unsigned long arg);
 
+static inline struct throtl_grp *fake_d_to_tg(struct fake_device *fake_d)
+{
+	return fake_d ? container_of(fake_d, struct throtl_grp, fake_d) : NULL;
+}
+
 static inline struct throtl_grp *pd_to_tg(struct blkg_policy_data *pd)
 {
 	return pd ? container_of(pd, struct throtl_grp, pd) : NULL;
@@ -296,6 +301,9 @@ static struct bio *throtl_pop_queued(struct list_head *queued,
 	} else {
 		list_move_tail(&qn->node, queued);
 	}
+
+//	struct bio *next_bio = throtl_peek_queued(queued);
+//	qn->tg->td->q = 
 
 	return bio;
 }
@@ -1005,6 +1013,38 @@ void throtl_update_dispatch_stats(struct blkcg_gq *blkg, u64 bytes,
 	local_irq_restore(flags);
 }
 
+/* Added by zhoufang
+ * throtl_update_fd_dispatch_stats() designed for update
+ * corresponding tg stata for according to fake_device
+ */
+void throtl_update_fd_dispatch_stats(struct fake_device *fake_d, u64 bytes,
+		int rw)
+{
+	struct throtl_grp *tg = fake_d_to_tg(fake_d);
+
+	struct tg_stats_cpu *stats_cpu;
+	unsigned long flags;
+
+	/* If per cpu stats are not allocated yet, don't do any accounting. */
+	if (tg->stats_cpu == NULL)
+		return;
+
+	/*
+	 * Disabling interrupts to provide mutual exclusion between two
+	 * writes on same cpu. It probably is not needed for 64bit. Not
+	 * optimizing that case yet.
+	 */
+	local_irq_save(flags);
+
+	stats_cpu = this_cpu_ptr(tg->stats_cpu);
+
+	blkg_rwstat_add(&stats_cpu->serviced, rw, 1);
+	blkg_rwstat_add(&stats_cpu->service_bytes, rw, bytes);
+
+	local_irq_restore(flags);
+}
+
+
 static void throtl_charge_bio(struct throtl_grp *tg, struct bio *bio)
 {
 	bool rw = bio_data_dir(bio);
@@ -1126,15 +1166,32 @@ static void tg_dispatch_one_bio(struct throtl_grp *tg, bool rw)
 	 * bio_lists[] and decrease total number queued.  The caller is
 	 * responsible for issuing these bios.
 	 */
+	 /*
+	  * Added by zhoufang. If tg corresponding to a fake_device, 
+	  * it's td depends on the first bio throttled in tg.
+	  */
 	if (parent_tg) {
 		throtl_add_bio_tg(bio, &tg->qnode_on_parent[rw], parent_tg);
 		start_parent_slice_with_credit(tg, parent_tg, rw);
 		start_parent_slice_with_credit(tg, parent_tg, RANDW);
 	} else {
-		throtl_qnode_add_bio(bio, &tg->qnode_on_parent[rw],
+		if (tg->fake_d)
+		{
+			struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+			struct throtl_data *td = q->td;
+			struct throtl_service_queue *td_sq = &td->service_queue;
+			throtl_qnode_add_bio(bio, &tg->qnode_on_parent[rw],
+				&td_sq->queued[rw]);
+			BUG_ON(td->nr_queued[rw] <= 0);
+			td->nr_queued[rw]--;
+		}
+		else
+		{
+			throtl_qnode_add_bio(bio, &tg->qnode_on_parent[rw],
 				     &parent_sq->queued[rw]);
-		BUG_ON(tg->td->nr_queued[rw] <= 0);
-		tg->td->nr_queued[rw]--;
+			BUG_ON(tg->td->nr_queued[rw] <= 0);
+			tg->td->nr_queued[rw]--;
+		}		
 	}
 
 	if(tg->has_rules[rw])
@@ -1449,6 +1506,132 @@ static ssize_t tg_set_conf_uint(struct kernfs_open_file *of,
 	return tg_set_conf(of, buf, nbytes, off, false);
 }
 
+/* Added by zhoufang
+ * 
+ */
+				
+static ssize_t tg_fd_set_conf(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off, bool is_u64)
+
+{	
+	struct blkcg *blkcg = css_to_blkcg(of_css(of));
+	struct blkg_fd_conf_ctx fd_ctx;
+	struct throtl_grp *tg;
+	struct throtl_service_queue *sq;
+	struct blkcg_gq *blkg;
+	struct cgroup_subsys_state *pos_css;
+	int ret;
+
+	ret = blkg_fd_conf_prep(blkcg, &blkcg_policy_throtl, buf, &fd_ctx);
+	if (ret)
+		return ret;
+
+//	tg = blkg_to_tg(ctx.blkg);
+//	sq = &tg->service_queue;
+
+	if (!ret)
+		ret = -1;
+
+	tg = fake_d_to_tg(fd_ctx.fake_d);
+
+	if (is_u64)
+		*(u64 *)((void *)tg + of_cft(of)->private) = ret;
+	else
+		*(unsigned int *)((void *)tg + of_cft(of)->private) = ret;
+
+	//throtl_log(&tg->service_queue,"limit change rbps=%llu wbps=%llu rwbps=%llu riops=%u wiops=%u rwiops=%u",tg->bps[READ], tg->bps[WRITE],tg->bps[RANDW],tg->iops[READ], tg->iops[WRITE],tg->iops[RANDW],);
+
+	/*
+	 * Update has_rules[] flags for the updated tg's subtree.  A tg is
+	 * considered to have rules if either the tg itself or any of its
+	 * ancestors has rules.  This identifies groups without any
+	 * restrictions in the whole hierarchy and allows them to bypass
+	 * blk-throttle.
+	 */
+//	blkg_for_each_descendant_pre(blkg, pos_css, ctx.blkg)
+//		tg_update_has_rules(blkg_to_tg(blkg));
+
+	/*
+	 * We're already holding queue_lock and know @tg is valid.  Let's
+	 * apply the new config directly.
+	 *
+	 * Restart the slices for both READ and WRITES. It might happen
+	 * that a group's limit are dropped suddenly and we don't want to
+	 * account recently dispatched IO with new low rate.
+	 */
+	throtl_start_new_slice(tg, 0);
+	throtl_start_new_slice(tg, 1);
+	throtl_start_new_slice(tg, 2);
+
+	if (tg->flags & THROTL_TG_PENDING) {
+		tg_update_disptime(tg);
+//		throtl_schedule_next_dispatch(sq->parent_sq, true);
+	}
+
+	blkg_fd_conf_finish(&fd_ctx);
+	return nbytes;
+}
+
+/*	Added by zhoufang
+ *	tg_fd_set_conf() is designed for parse config file hybrid_**_bps_device
+ */
+static ssize_t tg_fd_set_conf_u64(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	return tg_fd_set_conf(of, buf, nbytes, off, true);
+}
+
+				
+static ssize_t tg_fd_set_conf_uint(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	return tg_fd_set_conf(of, buf, nbytes, off, false);
+}
+
+
+/* Added by zhoufang */
+/* 
+ * 
+ */
+
+bool queue_in_fake_d(struct fake_device *fake_d, struct request_queue *q)
+{
+	struct fake_device_member *fd_member = fake_d->head;
+
+	while (fd_member != NULL)
+	{
+		if(fd_member->queue == q)
+			return true;
+		fd_member = fd_member->next;
+	}
+
+	return false;
+}
+					
+
+bool fake_d_has_limit(struct fake_device *fake_d, unsigned int rw,struct request_queue *q)
+{
+	if(queue_in_fake_d(fake_d,q))
+	{
+		struct throtl_grp *tg = fake_d_to_tg(fake_d);
+		return tg->has_rules[rw];
+	}
+			
+
+	return false;
+}
+
+
+
+
+
+/* Added by zhoufang */
+/* 
+ * throttle.rw_bps_device : per cgroup per device, R&W limit, in bps
+ * throttle.rw_iops_devic : per cgroup per device, R&W limit, in iops
+ * throttle.hybrid_read_bps_device: per cgroup, read limit, in bps
+ */
+
 static struct cftype throtl_files[] = {
 	{
 		.name = "throttle.read_bps_device",
@@ -1496,6 +1679,11 @@ static struct cftype throtl_files[] = {
 		.private = offsetof(struct tg_stats_cpu, serviced),
 		.seq_show = tg_print_cpu_rwstat,
 	},
+	{
+		.name = "throttle.hybrid_read_bps_device",
+		.private = offsetof(struct fake_device, bps[READ]),
+		.write = tg_fd_set_conf_uint,
+	},
 	{ }	/* terminate */
 };
 
@@ -1516,6 +1704,8 @@ static struct blkcg_policy blkcg_policy_throtl = {
 	.pd_reset_stats_fn	= throtl_pd_reset_stats,
 };
 
+
+
 bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 {
 	struct throtl_data *td = q->td;
@@ -1524,6 +1714,7 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 	struct throtl_service_queue *sq;
 	bool rw = bio_data_dir(bio);
 	struct blkcg *blkcg;
+	struct fake_device *fake_d;
 	bool throttled = false;
 
 	/* see throtl_charge_bio() */
@@ -1539,10 +1730,29 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 	blkcg = bio_blkcg(bio);
 	tg = throtl_lookup_tg(td, blkcg);
 	if (tg) {
+		bool without_limit = true;
+	
 		if (!tg->has_rules[rw] && !tg->has_rules[RANDW]) {
 			throtl_update_dispatch_stats(tg_to_blkg(tg),
 					bio->bi_iter.bi_size, bio->bi_rw);
-			goto out_unlock_rcu;
+
+			/* check whether we should update some tg in which q
+			 * was included.
+			 */
+			fake_d = blkcg->fd_head;
+			while(fake_d != NULL)
+			{
+				if(queue_in_fake_d(fake_d,q))
+				{
+					if(!fake_d_has_limit(fake_d,rw,q) && !fake_d_has_limit(fake_d,RANDW,q))
+						throtl_update_fd_dispatch_stats(fake_d,bio->bi_iter.bi_size, bio->bi_rw);
+					else
+						without_limit = false;
+				}
+				fake_d = fake_d->next;
+			}
+			if(without_limit)
+				goto out_unlock_rcu;
 		}
 	}
 
@@ -1553,7 +1763,7 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 	spin_lock_irq(q->queue_lock);
 	tg = throtl_lookup_create_tg(td, blkcg);
 	if (unlikely(!tg))
-		goto out_unlock;
+		goto fake_device_check;
 
 	sq = &tg->service_queue;
 
@@ -1594,7 +1804,7 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 		sq = sq->parent_sq;
 		tg = sq_to_tg(sq);
 		if (!tg)
-			goto out_unlock;
+			goto fake_device_check;
 	}
 
 	/* out-of-limit, queue to @tg */
@@ -1618,6 +1828,60 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 	if (tg->flags & THROTL_TG_WAS_EMPTY) {
 		tg_update_disptime(tg);
 		throtl_schedule_next_dispatch(tg->service_queue.parent_sq, true);
+	}
+
+fake_device_check:
+	if (throttled) {
+		fake_d = blkcg->fd_head;
+		while(fake_d != NULL) {
+			if (queue_in_fake_d(fake_d, q) && fake_d_has_limit(fake_d, rw, q)) {
+				throtl_charge_bio(fake_d_to_tg(fake_d),bio);
+			}
+		}
+		goto out_unlock;
+	}
+ 	else {
+		fake_d = blkcg->fd_head;
+		while(fake_d != NULL) {
+ 			if (queue_in_fake_d(fake_d, q) && fake_d_has_limit(fake_d, rw, q)) {
+				if (sq->nr_queued[rw])
+				break;
+
+				/* if above limits, break to queue */
+				if (!tg_may_dispatch(tg, bio, NULL))
+					break;
+
+				/* within limits, let's charge and dispatch directly */
+				throtl_charge_bio(tg, bio);
+
+				/*
+				 * We need to trim slice even when bios are not being queued
+				 * otherwise it might happen that a bio is not queued for
+				 * a long time and slice keeps on extending and trim is not
+				 * called for a long time. Now if limits are reduced suddenly
+				 * we take into account all the IO dispatched so far at new
+				 * low rate and * newly queued IO gets a really long dispatch
+				 * time.
+				 *
+				 * So keep on trimming slice even if bio is not queued.
+				 */
+				if(tg->has_rules[rw])
+					throtl_trim_slice(tg, rw);
+				if(tg->has_rules[RANDW])
+					throtl_trim_slice(tg, RANDW);
+
+				bio_associate_current(bio);
+				(q->td)->nr_queued[rw]++;
+				throtl_add_bio_tg(bio, qn, tg);
+				throttled = true;
+
+				if (tg->flags & THROTL_TG_WAS_EMPTY) {
+					tg_update_disptime(tg);
+					throtl_schedule_next_dispatch(tg->service_queue.parent_sq, true);
+				}
+			}
+		}
+		
 	}
 
 out_unlock:
@@ -1739,3 +2003,4 @@ static int __init throtl_init(void)
 }
 
 module_init(throtl_init);
+

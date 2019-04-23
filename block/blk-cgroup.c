@@ -276,6 +276,91 @@ err_free_blkg:
 	return ERR_PTR(ret);
 }
 
+
+/**
+* 
+*/
+struct blkcg_gq *fakedevice_lookup_create(struct blkcg *blkcg,
+	struct request_queue *q)
+{
+	struct blkcg_gq *blkg;
+
+	WARN_ON_ONCE(!rcu_read_lock_held());
+	lockdep_assert_held(q->queue_lock);
+
+	/*
+	 * This could be the first entry point of blkcg implementation and
+	 * we shouldn't allow anything to go through for a bypassing queue.
+	 */
+	if (unlikely(blk_queue_bypass(q)))
+		return ERR_PTR(blk_queue_dying(q) ? -EINVAL : -EBUSY);
+
+	blkg = __blkg_lookup(blkcg, q, true);
+	if (blkg)
+		return blkg;
+
+	/*
+	 * Create blkgs walking down from blkcg_root to @blkcg, so that all
+	 * non-root blkgs have access to their parents.
+	 */
+	while (true) {
+		struct blkcg *pos = blkcg;
+		struct blkcg *parent = blkcg_parent(blkcg);
+
+		while (parent && !__blkg_lookup(parent, q, false)) {
+			pos = parent;
+			parent = blkcg_parent(parent);
+		}
+
+		blkg = blkg_create(pos, q, NULL);
+		if (pos == blkcg || IS_ERR(blkg))
+			return blkg;
+	}
+}
+EXPORT_SYMBOL_GPL(fakedevice_lookup_create);
+
+/**
+ * blkg_fd_lookup_create - lookup fake device, try to create one if not there
+ * @blkcg: blkcg of interest
+ * @fd_id: fake device id of interest
+ */
+
+//struct fake_device *blkg_fd_lookup_create(struct blkcg *blkcg,
+//				    unsigned int  fd_id)
+//{
+//
+//	WARN_ON_ONCE(!rcu_read_lock_held());
+//	lockdep_assert_held(q->queue_lock);
+//
+//	/*
+//	 * This could be the first entry point of blkcg implementation and
+//	 * we shouldn't allow anything to go through for a bypassing queue.
+//	 */
+//	if (unlikely(blk_queue_bypass(q)))
+//		return ERR_PTR(blk_queue_dying(q) ? -EINVAL : -EBUSY);
+//
+//	struct fake_device fd_pointer = blkcg->fd_head;
+//	while(fd_pointer != NULL)
+//	{
+//		if(fd_pointer->id == fd_id)
+//			return fd_pointer;
+//		if (fd_pointer->next == NULL)
+//		    break;
+//		fd_pointer = fd_pointer->next;
+//	}
+//	struct fake_device *fd_alloc = kmalloc(sizeof(fake_device),GFP_ATOMIC);
+//	fd_alloc->id = fd_id;
+//	fd_alloc->head = NULL;
+//	fd_alloc->next = NULL;
+//
+//	fd_pointer->next = fd_alloc;
+//	
+//	return fd_alloc;
+//}
+//EXPORT_SYMBOL_GPL(blkg_lookup_create);
+
+
+
 /**
  * blkg_lookup_create - lookup blkg, try to create one if not there
  * @blkcg: blkcg of interest
@@ -761,13 +846,124 @@ int blkg_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
 }
 EXPORT_SYMBOL_GPL(blkg_conf_prep);
 
+
+int fd_member_lookup_create(struct fake_device *fake_d,struct gendisk *disk)
+{
+	struct fake_device_member *fd_member;
+
+	fd_member = fake_d->head;
+
+	if (fd_member == NULL)
+		goto fd_member_alloc;
+
+	do
+	{
+		if(fd_member->queue == disk->queue)
+			return ;
+
+		fd_member = fd_member->next;			
+	}while(fd_member != NULL);
+
+fd_member_alloc:
+	fd_member = kmalloc(sizeof(*fd_member), GFP_ATOMIC);
+	if (!fd_member)
+		return ERR_PTR(-ENOMEM);
+	fd_member->next = NULL;
+	fd_member->queue = disk->queue;
+}
+
+
+
+struct fake_device * fd_lookup_create(struct blkcg *blkcg, unsigned int f_id)
+{
+	struct fake_device *fd = blkcg->fd_head;
+	while(fd && fd->id != f_id){
+		fd = fd->next;
+	}
+
+	if(fd)
+		return fd;
+
+	fd = kzalloc(sizeof(*fd), GFP_ATOMIC);
+	if(!fd)
+		return ERR_PTR(-ENOMEM);
+
+	fd->id = f_id;
+	fd->next = blkcg->fd_head->next;
+	blkcg->fd_head->next = fd;
+
+	return fd;
+		
+}
+
+/* Added by zhoufang
+ * blkg_fd_conf_prep - parse and prepare for hybrid-device config file
+ *  
+ * @blkcg: target block cgroup
+ * @pol: target policy
+ * @input: input string
+ * @ctx: blkg_conf_ctx to be filled
+ *
+ */
+int blkg_fd_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
+		   const char *input,struct blkg_fd_conf_ctx *fd_ctx)
+	__acquires(rcu) __acquires(disk->queue->queue_lock)
+{
+	struct gendisk *disk;
+	struct blkcg_gq *blkg;
+	struct fake_device *fake_d;
+	unsigned int major, minor,fd_id;
+	unsigned long long v;
+	int part, ret;
+
+	if (sscanf(input, "%u:%u %u %llu", &major, &minor,&fd_id, &v) != 3)
+		return -EINVAL;
+
+	disk = get_gendisk(MKDEV(major, minor), &part);
+	if (!disk)
+		return -EINVAL;
+//	if (part) {
+//		put_disk(disk);
+//		return -EINVAL;
+//	}
+
+	rcu_read_lock();
+	spin_lock_irq(disk->queue->queue_lock);  // where is the corresponding unlock operation
+
+//	if (blkcg_policy_enabled(disk->queue, pol))
+//		blkg = blkg_lookup_create(blkcg, disk->queue);
+//	else
+//		blkg = ERR_PTR(-EINVAL);
+
+	fake_d = fd_lookup_create(fd_id,blkcg);
+
+	fd_member_lookup_create(fake_d,disk);
+
+	fd_ctx->disk = disk;
+	fd_ctx->fake_d = fake_d;
+	fd_ctx->v = v;
+	
+	return v;
+}
+EXPORT_SYMBOL_GPL(blkg_fd_conf_prep);
+
+
 /**
- * blkg_conf_finish - finish up per-blkg config update
+ * blkg_fd_conf_finish - finish up per-blkg fake_device limit config update
  * @ctx: blkg_conf_ctx intiailized by blkg_conf_prep()
  *
  * Finish up after per-blkg config update.  This function must be paired
  * with blkg_conf_prep().
  */
+void blkg_fd_conf_finish(struct blkg_fd_conf_ctx *fd_ctx)
+	__releases(fd_ctx->disk->queue->queue_lock) __releases(rcu)
+{
+	spin_unlock_irq(fd_ctx->disk->queue->queue_lock);
+	rcu_read_unlock();
+	put_disk(fd_ctx->disk);
+}
+EXPORT_SYMBOL_GPL(blkg_fd_conf_finish);
+
 void blkg_conf_finish(struct blkg_conf_ctx *ctx)
 	__releases(ctx->disk->queue->queue_lock) __releases(rcu)
 {
@@ -776,6 +972,7 @@ void blkg_conf_finish(struct blkg_conf_ctx *ctx)
 	put_disk(ctx->disk);
 }
 EXPORT_SYMBOL_GPL(blkg_conf_finish);
+
 
 struct cftype blkcg_files[] = {
 	{
@@ -1264,3 +1461,4 @@ out_unlock:
 	mutex_unlock(&blkcg_pol_register_mutex);
 }
 EXPORT_SYMBOL_GPL(blkcg_policy_unregister);
+

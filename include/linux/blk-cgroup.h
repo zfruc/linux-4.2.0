@@ -37,6 +37,45 @@ enum blkg_rwstat_type {
 
 struct blkcg_gq;
 
+/* Added by zhoufang */
+struct fake_device_member{
+	struct request_queue 	*queue;
+
+	struct fake_device_member *next;
+};
+
+/* Added by zhoufang */
+/* 
+ * Fake device is a collection of multiple devices,
+ * each collection for per cgroup mapping to a fake_device.
+ * The function and defination of fake_device is similiar to throtl_grp,
+ * which is designed per cgroup per device.
+ */
+struct fake_device{
+    unsigned int    id;
+	struct fake_device_member 	*head;
+
+	bool			has_rules[3];
+	uint16_t		bps[3];
+	unsigned int	iops[3];
+
+	
+	uint16_t		bytes_disp[3];
+	unsigned int	io_disp[3];
+
+	unsigned long	slice_start[3];
+	unsigned long	slice_end[3];
+	
+	
+	struct fake_device 		*next;
+};
+
+
+/* Added by zhoufang */
+/* 
+ * Add member fake_device list;
+ */
+
 struct blkcg {
 	struct cgroup_subsys_state	css;
 	spinlock_t			lock;
@@ -48,6 +87,9 @@ struct blkcg {
 	struct blkcg_policy_data	*pd[BLKCG_MAX_POLS];
 
 	struct list_head		all_blkcgs_node;
+
+	struct fake_device			*fd_head;
+	
 #ifdef CONFIG_CGROUP_WRITEBACK
 	struct list_head		cgwb_list;
 #endif
@@ -193,9 +235,26 @@ struct blkg_conf_ctx {
 	u64				v;
 };
 
+struct blkg_fd_conf_ctx {
+	struct gendisk			*disk;
+	struct fake_device		*fake_d;
+	u64				v;
+};
+
+
 int blkg_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
 		   const char *input, struct blkg_conf_ctx *ctx);
 void blkg_conf_finish(struct blkg_conf_ctx *ctx);
+
+
+/*	Added by zhoufang.
+ *	Make blkg_fd_conf_prep() & blkg_fd_conf_finish() externed.
+ */
+int blkg_fd_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
+		   const char *input,struct blkg_fd_conf_ctx *fd_ctx);
+
+void blkg_fd_conf_finish(struct blkg_fd_conf_ctx *fd_ctx)
+	__releases(fd_ctx->disk->queue->queue_lock) __releases(rcu);
 
 
 static inline struct blkcg *css_to_blkcg(struct cgroup_subsys_state *css)
@@ -591,6 +650,12 @@ static inline void blkg_rwstat_merge(struct blkg_rwstat *to,
 
 #else	/* CONFIG_BLK_CGROUP */
 
+struct fake_device_member{
+};
+
+struct fake_device{
+};
+
 struct blkcg {
 };
 
@@ -648,3 +713,4 @@ static inline struct request_list *blk_rq_rl(struct request *rq) { return &rq->q
 #endif	/* CONFIG_BLOCK */
 #endif	/* CONFIG_BLK_CGROUP */
 #endif	/* _BLK_CGROUP_H */
+
