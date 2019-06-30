@@ -812,9 +812,11 @@ int blkg_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
 		put_disk(disk);
 		return -EINVAL;
 	}
+	printk("the major of disk=%d,minor=%d,part=%d\n",disk->major,disk->minors,part);
 
 	rcu_read_lock();
 	spin_lock_irq(disk->queue->queue_lock);
+	printk("queue_lock addr=%llu.\n",disk->queue->queue_lock);
 
 	if (blkcg_policy_enabled(disk->queue, pol))
 		blkg = blkg_lookup_create(blkcg, disk->queue);
@@ -876,21 +878,32 @@ fd_member_alloc:
 
 struct fake_device * fd_lookup_create(struct blkcg *blkcg, unsigned int f_id)
 {
+        printk("the addr of blkcg is %llu\n",blkcg);
 	struct fake_device *fd = blkcg->fd_head;
+        printk("fd = %d.\n",fd);
+	if(!fd)
+	{
+		printk("fd not exist\n");
+		goto create;
+	}
 	while(fd && fd->id != f_id){
+                printk("condition: %d %d\n",fd,fd->id!=f_id);
+                printk("now in loop,fd = %d, fd->next=%d.\n",fd,fd->next);
 		fd = fd->next;
 	}
 
 	if(fd)
 		return fd;
 
-	fd = kzalloc(sizeof(*fd), GFP_ATOMIC);
+create:
+        printk("sizeof(*fd) = %d.\n",sizeof(*fd));
+        fd = kzalloc(sizeof(*fd), GFP_ATOMIC);
 	if(!fd)
 		return ERR_PTR(-ENOMEM);
 
 	fd->id = f_id;
-	fd->next = blkcg->fd_head->next;
-	blkcg->fd_head->next = fd;
+	fd->next = blkcg->fd_head;
+	blkcg->fd_head = fd;
 
 	return fd;
 		
@@ -916,26 +929,35 @@ int blkg_fd_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
 	unsigned long long v;
 	int part, ret;
 
-	if (sscanf(input, "%u:%u %u %llu", &major, &minor,&fd_id, &v) != 3)
+	printk("the input in blkg_fd_conf_prep is:%s\n",input);
+	if (sscanf(input, "%u:%u %u %llu", &major, &minor,&fd_id, &v) != 4)
+	{
+		printk("error parse input.\n");
 		return -EINVAL;
+	}
+	printk("the input was parsed. major is %u,%minor is %u,fd_id is %u,v is %llu.\n",major,minor,fd_id,v);
 
 	disk = get_gendisk(MKDEV(major, minor), &part);
 	if (!disk)
+	{
+		printk("get_gendisk error, major=%u,minor=%u,part=%u.\n",major,minor,part);
 		return -EINVAL;
-//	if (part) {
+	}
+	printk("gendisk passed.disk->major=%d,disk->minor=%d,part=%d\n",disk->major,disk->minors,part);
+//      if (part) {
 //		put_disk(disk);
 //		return -EINVAL;
 //	}
 
 	rcu_read_lock();
-	spin_lock_irq(disk->queue->queue_lock);  // where is the corresponding unlock operation
+//	spin_lock_irq(disk->queue->queue_lock);  // where is the corresponding unlock operation
+	printk("now we get rcu_read_lock and queue_lock addr=%llu.\n",disk->queue->queue_lock);
+	if (blkcg_policy_enabled(disk->queue, pol))
+		blkg = blkg_lookup_create(blkcg, disk->queue);
+	else
+		blkg = ERR_PTR(-EINVAL);
 
-//	if (blkcg_policy_enabled(disk->queue, pol))
-//		blkg = blkg_lookup_create(blkcg, disk->queue);
-//	else
-//		blkg = ERR_PTR(-EINVAL);
-
-	fake_d = fd_lookup_create(fd_id,blkcg);
+	fake_d = fd_lookup_create(blkcg,fd_id);
 
 	fd_member_lookup_create(fake_d,disk);
 
@@ -958,7 +980,7 @@ EXPORT_SYMBOL_GPL(blkg_fd_conf_prep);
 void blkg_fd_conf_finish(struct blkg_fd_conf_ctx *fd_ctx)
 	__releases(fd_ctx->disk->queue->queue_lock) __releases(rcu)
 {
-	spin_unlock_irq(fd_ctx->disk->queue->queue_lock);
+//	spin_unlock_irq(fd_ctx->disk->queue->queue_lock);
 	rcu_read_unlock();
 	put_disk(fd_ctx->disk);
 }

@@ -1,10 +1,12 @@
 starttime=`date +'%Y-%m-%d %H:%M:%S'`
 #make bzImage
-make menuconfig
-make modules -j8
-make modules_install
+#make menuconfig
+#make modules -j8
+#make modules_install
+#make
+#make install
 make
-make install
+make modules_install install
 endtime=`date +'%Y-%m-%d %H:%M:%S'`
 start_seconds=$(date --date="$starttime" +%s);
 end_seconds=$(date --date="$endtime" +%s);
