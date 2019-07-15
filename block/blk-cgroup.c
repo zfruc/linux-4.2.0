@@ -870,25 +870,33 @@ fd_member_alloc:
 	fd_member = kmalloc(sizeof(*fd_member), GFP_ATOMIC);
 	if (!fd_member)
 		return ERR_PTR(-ENOMEM);
-	fd_member->next = NULL;
+	fd_member->next = fake_d->head;
+	fake_d->head = fd_member;
 	fd_member->queue = disk->queue;
 }
 
-
+void tg_init(struct throtl_grp *tg)
+{
+	tg->bps[0] = tg->bps[1] = tg->bps[2] = -1;
+	tg->iops[0] = tg->iops[1] = tg->iops[2] = -1;
+	tg->has_rules[0] = tg->has_rules[1] = tg->has_rules[2] = FALSE;
+	tg->bytes_disp[0] = tg->bytes_disp[1] = tg->bytes_disp[2] = 0;
+	tg->io_disp[0] = tg->io_disp[1] = tg->io_disp[2] = 0;
+}
 
 struct fake_device * fd_lookup_create(struct blkcg *blkcg, unsigned int f_id)
 {
-        printk("the addr of blkcg is %llu\n",blkcg);
-	struct fake_device *fd = blkcg->fd_head;
-        printk("fd = %d.\n",fd);
-	if(!fd)
+    printk("the addr of blkcg is %llu\n",blkcg);
+	struct fake_device *fake_d = blkcg->fd_head;
+    printk("fd = %d.\n",fake_d);
+	if(!fake_d)
 	{
 		printk("fd not exist\n");
 		goto create;
 	}
-	while(fd && fd->id != f_id){
-                printk("condition: %d %d\n",fd,fd->id!=f_id);
-                printk("now in loop,fd = %d, fd->next=%d.\n",fd,fd->next);
+	while(fake_d && fake_d->id != f_id){
+                printk("condition: %d %d\n",fake_d,fake_d->id!=f_id);
+                printk("now in loop,fd = %d, fd->next=%d.\n",fake_d,fake_d->next);
 		fd = fd->next;
 	}
 
@@ -896,16 +904,24 @@ struct fake_device * fd_lookup_create(struct blkcg *blkcg, unsigned int f_id)
 		return fd;
 
 create:
-        printk("sizeof(*fd) = %d.\n",sizeof(*fd));
-        fd = kzalloc(sizeof(*fd), GFP_ATOMIC);
-	if(!fd)
+    printk("sizeof(*fd) = %d.\n",sizeof(*fake_d));
+    fake_d = kzalloc(sizeof(*fake_d), GFP_ATOMIC);
+	if(!fake_d)
 		return ERR_PTR(-ENOMEM);
+	struct throtl_grp *tg;
+	tg = kzalloc(sizeof(*tg), GFP_ATOMIC);
+	if(!tg)
+		return ERR_PTR(-ENOMEM);
+	
 
-	fd->id = f_id;
-	fd->next = blkcg->fd_head;
-	blkcg->fd_head = fd;
+	fake_d->id = f_id;
+	fake_d->next = blkcg->fd_head;
+	blkcg->fd_head = fake_d;
 
-	return fd;
+	fake_d->tg = tg;
+	tg_init(tg);
+
+	return fake_d;
 		
 }
 

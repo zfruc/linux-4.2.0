@@ -68,6 +68,7 @@ struct fake_device{
 	
 	
 	struct fake_device 		*next;
+	struct throtl_grp		*tg;
 };
 
 

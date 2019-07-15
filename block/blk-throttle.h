@@ -91,7 +91,7 @@ struct throtl_grp {
 	/* List of tgs waiting for per cpu stats memory to be allocated */
 	struct list_head stats_alloc_node;
 
-	struct fake_device  *fake_d;  
+	struct fake_device *fake_d;
 };
 
 

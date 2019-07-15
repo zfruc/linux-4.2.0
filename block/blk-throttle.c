@@ -93,7 +93,8 @@ static void throtl_pending_timer_fn(unsigned long arg);
 
 static inline struct throtl_grp *fake_d_to_tg(struct fake_device *fake_d)
 {
-	return fake_d ? container_of(fake_d, struct throtl_grp, fake_d) : NULL;
+//	return fake_d ? container_of(fake_d, struct throtl_grp, fake_d) : NULL;
+	return fake_d->tg;
 }
 
 static inline struct throtl_grp *pd_to_tg(struct blkg_policy_data *pd)
@@ -393,6 +394,16 @@ static void tg_update_has_rules(struct throtl_grp *tg)
 		tg->has_rules[rw] = (parent_tg && parent_tg->has_rules[rw]) ||
 				    (tg->bps[rw] != -1 || tg->iops[rw] != -1);
 }
+
+/* Added by zhoufang
+ * update has_rules[] if needed
+*/
+static void tg_fd_update_has_rules(struct throtl_grp *tg)
+{
+	for (rw = READ; rw <= RANDW; rw++)
+ 		tg->has_rules[rw] = (tg->bps[rw] != -1 || tg->iops[rw] != -1);
+}
+
 
 static void throtl_pd_online(struct blkcg_gq *blkg)
 {
@@ -1549,7 +1560,7 @@ static ssize_t tg_fd_set_conf(struct kernfs_open_file *of,
 	 * blk-throttle.
 	 */
 //	blkg_for_each_descendant_pre(blkg, pos_css, ctx.blkg)
-//		tg_update_has_rules(blkg_to_tg(blkg));
+		tg_fd_update_has_rules(tg);
 
 	/*
 	 * We're already holding queue_lock and know @tg is valid.  Let's
@@ -1681,7 +1692,7 @@ static struct cftype throtl_files[] = {
 	},
 	{
 		.name = "throttle.hybrid_read_bps_device",
-		.private = offsetof(struct fake_device, bps[READ]),
+		.private = offsetof(struct throtl_grp, bps[READ]),
 		.write = tg_fd_set_conf_uint,
 	},
 	{ }	/* terminate */
@@ -1844,8 +1855,9 @@ fake_device_check:
 		fake_d = blkcg->fd_head;
 		while(fake_d != NULL) {
  			if (queue_in_fake_d(fake_d, q) && fake_d_has_limit(fake_d, rw, q)) {
+				tg = fake_d_to_tg(fake_d);
 				if (sq->nr_queued[rw])
-				break;
+					break;
 
 				/* if above limits, break to queue */
 				if (!tg_may_dispatch(tg, bio, NULL))
@@ -1880,6 +1892,7 @@ fake_device_check:
 					throtl_schedule_next_dispatch(tg->service_queue.parent_sq, true);
 				}
 			}
+			fake_d = fake_d->next;
 		}
 		
 	}
