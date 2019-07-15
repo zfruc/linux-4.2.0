@@ -400,6 +400,7 @@ static void tg_update_has_rules(struct throtl_grp *tg)
 */
 static void tg_fd_update_has_rules(struct throtl_grp *tg)
 {
+	int rw = 0;
 	for (rw = READ; rw <= RANDW; rw++)
  		tg->has_rules[rw] = (tg->bps[rw] != -1 || tg->iops[rw] != -1);
 }
@@ -1856,6 +1857,7 @@ fake_device_check:
 		while(fake_d != NULL) {
  			if (queue_in_fake_d(fake_d, q) && fake_d_has_limit(fake_d, rw, q)) {
 				tg = fake_d_to_tg(fake_d);
+				sq = &tg->service_queue;
 				if (sq->nr_queued[rw])
 					break;
 

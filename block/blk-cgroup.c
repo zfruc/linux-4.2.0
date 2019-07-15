@@ -881,7 +881,7 @@ void tg_init(struct throtl_grp *tg)
 {
 	tg->bps[0] = tg->bps[1] = tg->bps[2] = -1;
 	tg->iops[0] = tg->iops[1] = tg->iops[2] = -1;
-	tg->has_rules[0] = tg->has_rules[1] = tg->has_rules[2] = FALSE;
+	tg->has_rules[0] = tg->has_rules[1] = tg->has_rules[2] = false;
 	tg->bytes_disp[0] = tg->bytes_disp[1] = tg->bytes_disp[2] = 0;
 	tg->io_disp[0] = tg->io_disp[1] = tg->io_disp[2] = 0;
 }
