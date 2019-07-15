@@ -26,6 +26,8 @@
 #include <linux/atomic.h>
 #include <linux/blk-cgroup.h>
 #include "blk.h"
+#include "blk-throttle.h"
+
 
 #define MAX_KEY_LEN 100
 
@@ -897,11 +899,11 @@ struct fake_device * fd_lookup_create(struct blkcg *blkcg, unsigned int f_id)
 	while(fake_d && fake_d->id != f_id){
                 printk("condition: %d %d\n",fake_d,fake_d->id!=f_id);
                 printk("now in loop,fd = %d, fd->next=%d.\n",fake_d,fake_d->next);
-		fd = fd->next;
+		fake_d = fake_d->next;
 	}
 
-	if(fd)
-		return fd;
+	if(fake_d)
+		return fake_d;
 
 create:
     printk("sizeof(*fd) = %d.\n",sizeof(*fake_d));
