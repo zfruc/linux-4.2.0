@@ -1754,6 +1754,7 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 			fake_d = blkcg->fd_head;
 			while(fake_d != NULL)
 			{
+				printk("fake_d: id=%d,r_bps=%d,w_bps=%d,rw_bps=%d\n",fake_d->id,fake_d->tg->bps[0],fake_d->tg->bps[1],fake_d->tg->bps[2]);
 				if(queue_in_fake_d(fake_d,q))
 				{
 					if(!fake_d_has_limit(fake_d,rw,q) && !fake_d_has_limit(fake_d,RANDW,q))
