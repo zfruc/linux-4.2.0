@@ -1534,6 +1534,7 @@ static ssize_t tg_fd_set_conf(struct kernfs_open_file *of,
 	struct cgroup_subsys_state *pos_css;
 	int ret;
 
+	printk("the blkcg addr in conf is:%llu\n",blkcg);
 	ret = blkg_fd_conf_prep(blkcg, &blkcg_policy_throtl, buf, &fd_ctx);
 	if (ret)
 		return ret;
@@ -1729,9 +1730,11 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 	struct fake_device *fake_d;
 	bool throttled = false;
 
+	printk("now in blk_throtl_bio function.\n");
 	/* see throtl_charge_bio() */
 	if (bio->bi_rw & REQ_THROTTLED)
 		goto out;
+	printk("pass goto out test.\n");
 
 	/*
 	 * A throtl_grp pointer retrieved under rcu can be used to access
@@ -1740,6 +1743,7 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 	 */
 	rcu_read_lock();
 	blkcg = bio_blkcg(bio);
+	printk("blkcg_addr = %llu\n",blkcg);
 	tg = throtl_lookup_tg(td, blkcg);
 	if (tg) {
 		bool without_limit = true;
@@ -1752,6 +1756,7 @@ bool blk_throtl_bio(struct request_queue *q, struct bio *bio)
 			 * was included.
 			 */
 			fake_d = blkcg->fd_head;
+			printk("blkcg->fd_head addr = %llu\n",blkcg->fd_head);
 			while(fake_d != NULL)
 			{
 				printk("fake_d: id=%d,r_bps=%d,w_bps=%d,rw_bps=%d\n",fake_d->id,fake_d->tg->bps[0],fake_d->tg->bps[1],fake_d->tg->bps[2]);
