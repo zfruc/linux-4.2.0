@@ -26,6 +26,8 @@
 #include <linux/atomic.h>
 #include <linux/blk-cgroup.h>
 #include "blk.h"
+#include "blk-throttle.h"
+
 
 #define MAX_KEY_LEN 100
 
@@ -879,7 +881,7 @@ void tg_init(struct throtl_grp *tg)
 {
 	tg->bps[0] = tg->bps[1] = tg->bps[2] = -1;
 	tg->iops[0] = tg->iops[1] = tg->iops[2] = -1;
-	tg->has_rules[0] = tg->has_rules[1] = tg->has_rules[2] = FALSE;
+	tg->has_rules[0] = tg->has_rules[1] = tg->has_rules[2] = false;
 	tg->bytes_disp[0] = tg->bytes_disp[1] = tg->bytes_disp[2] = 0;
 	tg->io_disp[0] = tg->io_disp[1] = tg->io_disp[2] = 0;
 }
@@ -897,11 +899,11 @@ struct fake_device * fd_lookup_create(struct blkcg *blkcg, unsigned int f_id)
 	while(fake_d && fake_d->id != f_id){
                 printk("condition: %d %d\n",fake_d,fake_d->id!=f_id);
                 printk("now in loop,fd = %d, fd->next=%d.\n",fake_d,fake_d->next);
-		fd = fd->next;
+		fake_d = fake_d->next;
 	}
 
-	if(fd)
-		return fd;
+	if(fake_d)
+		return fake_d;
 
 create:
     printk("sizeof(*fd) = %d.\n",sizeof(*fake_d));
@@ -981,7 +983,7 @@ int blkg_fd_conf_prep(struct blkcg *blkcg, const struct blkcg_policy *pol,
 	fd_ctx->fake_d = fake_d;
 	fd_ctx->v = v;
 	
-	return v;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(blkg_fd_conf_prep);
 
@@ -1499,4 +1501,3 @@ out_unlock:
 	mutex_unlock(&blkcg_pol_register_mutex);
 }
 EXPORT_SYMBOL_GPL(blkcg_policy_unregister);
-
